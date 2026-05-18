@@ -1,0 +1,928 @@
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const twilio = require('twilio');
+<<<<<<< HEAD
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+
+const app = express();
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+  'http://ec2-47-128-147-152.ap-southeast-1.compute.amazonaws.com',
+  'http://ec2-47-128-147-152.ap-southeast-1.compute.amazonaws.com:3000',
+  'http://ec2-47-128-147-152.ap-southeast-1.compute.amazonaws.com:5173',
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  credentials: true,
+}));
+app.use(express.json());
+app.use(cookieParser());
+
+// JWT Secret - Store in .env file
+const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key_change_this';
+
+//TWILIO SETUP
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+//MONGODB SETUP
+mongoose.connect(process.env.MONGODB_URI)
+  .then(async () => {
+    console.log("Connected to MongoDB");
+    await cleanupLegacyProfileIndexes();
+    await ensureAdminUser();
+  })
+  .catch((err) => console.error("MongoDB connection error:", err));
+
+// USER SCHEMA for authentication
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    role: { type: String, enum: ['user', 'admin'], default: 'user' },
+    createdAt: { type: Date, default: Date.now },
+    lastLogin: { type: Date }
+});
+const User = mongoose.model('User', userSchema);
+
+function userPayload(user) {
+    return {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role || 'user'
+    };
+}
+
+function signToken(user) {
+    return jwt.sign(
+        {
+            userId: user._id,
+            username: user.username,
+            email: user.email,
+            role: user.role || 'user'
+        },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+    );
+}
+
+async function ensureAdminUser() {
+    const email = process.env.ADMIN_EMAIL;
+    const password = process.env.ADMIN_PASSWORD;
+    const username = process.env.ADMIN_USERNAME || 'admin';
+    if (!email || !password) {
+        console.warn('ADMIN_EMAIL / ADMIN_PASSWORD not set — admin account not seeded');
+        return;
+    }
+    let admin = await User.findOne({ email: email.toLowerCase() });
+    if (!admin) {
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        admin = await User.create({
+            username,
+            email: email.toLowerCase(),
+            password: hashedPassword,
+            role: 'admin'
+        });
+        await ensureProfileForUser(admin);
+        console.log('Admin account created:', email);
+        return;
+    }
+    if (admin.role !== 'admin') {
+        admin.role = 'admin';
+        await admin.save();
+        console.log('Promoted existing user to admin:', email);
+    }
+}
+
+// PROFILE SCHEMA — one profile per authenticated user
+const profileSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+    deviceId: { type: String, default: '' },
+    driverName: String,
+    email: String,
+    emergencyNumber: { type: String, default: '' },
+    hasCrashed: { type: Boolean, default: false },
+    updatedAt: { type: Date, default: Date.now }
+});
+const Profile = mongoose.model('Profile', profileSchema);
+
+async function cleanupLegacyProfileIndexes() {
+    try {
+        const collection = mongoose.connection.collection('profiles');
+        const indexes = await collection.indexes();
+        for (const index of indexes) {
+            if (index.key?.deviceId === 1 && index.unique) {
+                await collection.dropIndex(index.name);
+                console.log(`Dropped legacy unique index on deviceId: ${index.name}`);
+            }
+        }
+        await Profile.syncIndexes();
+    } catch (err) {
+        console.warn('Profile index cleanup skipped:', err.message);
+    }
+}
+
+function toUserId(id) {
+    return new mongoose.Types.ObjectId(id);
+}
+
+function formatProfileDoc(profile) {
+    const data = profile.toObject();
+    if (data.deviceId === 'UNASSIGNED') {
+        data.deviceId = '';
+    }
+    return data;
+}
+
+async function ensureProfileForUser(user) {
+    let profile = await Profile.findOne({ userId: user._id });
+    if (!profile) {
+        profile = await Profile.create({
+            userId: user._id,
+            driverName: user.username,
+            email: user.email,
+            deviceId: '',
+            emergencyNumber: ''
+        });
+    }
+    return profile;
+}
+
+// TELEMETRY SCHEMA (existing)
+=======
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log("Connected to MongoDB"))
+  .catch((err) => console.error("MongoDB connection error:", err));
+
+const profileSchema = new mongoose.Schema({
+    deviceId: { type: String, required: true, unique: true }, 
+    driverName: String,
+    email: String,
+    emergencyNumber: String,
+    hasCrashed: { type: Boolean, default: false } 
+});
+const Profile = mongoose.model('Profile', profileSchema);
+
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+const telemetrySchema = new mongoose.Schema({
+    deviceId: { type: String, required: true },
+    imu: {
+        peak_g: Number,
+        accel_x: Number,
+        accel_y: Number,
+        accel_z: Number
+    },
+    gps: {
+        velocity_kmh: Number,
+        latitude: Number,
+        longitude: Number,
+        altitude_m: Number,
+        satellites: Number,
+        fixed: Boolean
+    },
+    timestamp: { type: Date, default: Date.now },
+    spike: {
+        detected: { type: Boolean, default: false },
+        delta_g: { type: Number, default: 0 },
+        prev_g: { type: Number, default: 0 },
+        severity: { type: String, default: 'none' }
+    }
+});
+const Telemetry = mongoose.model('Telemetry', telemetrySchema);
+
+<<<<<<< HEAD
+// ============ AUTHENTICATION MIDDLEWARE ============
+const authenticateToken = (req, res, next) => {
+    const token = req.cookies.token || req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ error: 'Access denied. No token provided.' });
+    }
+    
+    try {
+        const verified = jwt.verify(token, JWT_SECRET);
+        req.user = verified;
+        next();
+    } catch (error) {
+        res.status(403).json({ error: 'Invalid or expired token' });
+    }
+};
+
+// ============ AUTHENTICATION ROUTES ============
+
+// SIGNUP
+app.post('/api/auth/signup', async (req, res) => {
+    const { username, email, password } = req.body;
+    
+    try {
+        // Check if user already exists
+        const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+        if (existingUser) {
+            return res.status(400).json({ error: 'User already exists with this email or username' });
+        }
+        
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        
+        // Create new user
+        const newUser = new User({
+            username,
+            email,
+            password: hashedPassword,
+            role: 'user'
+        });
+        
+        await newUser.save();
+        await ensureProfileForUser(newUser);
+        
+        const token = signToken(newUser);
+        
+        // Set cookie
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            sameSite: 'lax'
+        });
+        
+        res.status(201).json({ 
+            message: 'User created successfully', 
+            token,
+            user: userPayload(newUser)
+        });
+        
+    } catch (error) {
+        console.error('Signup error:', error);
+        res.status(500).json({ error: 'Failed to create user' });
+    }
+});
+
+// LOGIN
+app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    
+    try {
+        // Always lowercase for lookup so case differences never block login
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        
+        // Check password
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        if (!isValidPassword) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
+
+        // If this email matches ADMIN_EMAIL env var, always enforce admin role.
+        // Fixes cases where the document was created manually without role:'admin'.
+        const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
+        if (adminEmail && user.email.toLowerCase() === adminEmail && user.role !== 'admin') {
+            user.role = 'admin';
+            console.log('[AUTH] Enforced admin role on login for ' + user.email);
+        }
+        
+        // Update last login
+        user.lastLogin = new Date();
+        await user.save();
+
+        await ensureProfileForUser(user);
+        
+        // Create JWT token
+        const token = signToken(user);
+        
+        // Set cookie
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            sameSite: 'lax'
+        });
+        
+        res.json({ 
+            message: 'Login successful', 
+            token,
+            user: userPayload(user)
+        });
+        
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// LOGOUT
+app.post('/api/auth/logout', (req, res) => {
+    res.clearCookie('token');
+    res.json({ message: 'Logged out successfully' });
+});
+
+// GET CURRENT USER (for persisting login)
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.userId).select('-password');
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        // Issue a fresh token so stale tokens (e.g. issued before admin promotion) are corrected
+        const freshToken = signToken(user);
+        res.json({ user: userPayload(user), token: freshToken });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get user' });
+    }
+});
+
+// ============ PROTECTED API ROUTES ============
+// (Add authenticateToken middleware to protect your existing routes)
+
+// API 1: GET CURRENT USER'S PROFILE (Protected)
+app.get('/api/profile/latest', authenticateToken, async (req, res) => {
+    try {
+        const userId = toUserId(req.user.userId);
+        let profile = await Profile.findOne({ userId });
+
+        if (!profile) {
+            const user = await User.findById(userId).select('username email');
+            if (user) {
+                profile = await ensureProfileForUser(user);
+            } else {
+                return res.status(404).json({ error: 'User not found' });
+            }
+        }
+
+        res.status(200).json(formatProfileDoc(profile));
+=======
+// NOTIFICATION SCHEMA - NEW
+const notificationSchema = new mongoose.Schema({
+    deviceId: { type: String, required: true },
+    severity: { type: String, required: true }, // 'moderate' or 'severe'
+    deltaG: Number,
+    prevG: Number,
+    currentG: Number,
+    velocity: Number,
+    latitude: Number,
+    longitude: Number,
+    timestamp: { type: Date, default: Date.now },
+    acknowledged: { type: Boolean, default: false }
+});
+const Notification = mongoose.model('Notification', notificationSchema);
+
+const SPIKE_THRESHOLDS = {
+    moderate: 3.5,  // Show notification + log
+    severe:   7.0,  // Show notification + log + AUTO SMS
+};
+
+function getSpikeSeverity(deltaG) {
+    const absDelta = Math.abs(deltaG);
+    if (absDelta >= SPIKE_THRESHOLDS.severe)   return 'severe';
+    if (absDelta >= SPIKE_THRESHOLDS.moderate) return 'moderate';
+    return 'none';
+}
+
+// HELPER: Auto-send SMS for severe crashes
+async function sendCrashSMS(deviceId, severity, deltaG, prevG, currentG, timestamp, lat, lng) {
+    try {
+        const profile = await Profile.findOne({ deviceId });
+        if (!profile || !profile.emergencyNumber) {
+            console.log('[SMS SKIP] No emergency number for ' + deviceId);
+            return;
+        }
+
+        const toNumber = profile.emergencyNumber;
+        const time = timestamp ? new Date(timestamp).toLocaleTimeString() : 'N/A';
+        const mapsLink = (lat && lng) ? `https://maps.google.com/?q=${lat},${lng}` : 'GPS unavailable';
+
+        const body =
+            `⚠️ CRASH ALERT - ${severity.toUpperCase()}\n` +
+            `Vehicle: ${deviceId}\n` +
+            `Driver: ${profile.driverName}\n` +
+            `Impact: Δ${Number(deltaG).toFixed(2)}g (${Number(prevG).toFixed(2)}g → ${Number(currentG).toFixed(2)}g)\n` +
+            `Time: ${time}\n` +
+            `Location: ${mapsLink}`;
+
+        await twilioClient.messages.create({
+            body,
+            to: toNumber,
+            from: process.env.TWILIO_PHONE_NUMBER,
+        });
+
+        console.log(`[SMS AUTO-SENT] Alert sent to ${toNumber} for ${deviceId}`);
+    } catch (err) {
+        console.error('[SMS FAILED]', err.message);
+    }
+}
+
+// API 1: GET LATEST PROFILE
+app.get('/api/profile/latest', async (req, res) => {
+    try {
+        const profile = await Profile.findOne().sort({ _id: -1 });
+        if (profile) {
+            res.status(200).json(profile);
+        } else {
+            res.status(404).json({ message: "No profile found" });
+        }
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+    } catch (error) {
+        console.error("Error fetching profile:", error);
+        res.status(500).json({ error: "Failed to fetch profile" });
+    }
+});
+
+<<<<<<< HEAD
+// API 2: SAVE PROFILE (Protected) — deviceId links telemetry from hardware
+app.post('/api/profile', authenticateToken, async (req, res) => {
+    const { deviceId, driverName, email, emergencyNumber } = req.body;
+    const trimmedDeviceId = (deviceId || '').trim();
+    const userId = toUserId(req.user.userId);
+    console.log("Received Profile Data:", { driverName, email, deviceId: trimmedDeviceId, userId: String(userId) });
+
+    try {
+        const profile = await Profile.findOneAndUpdate(
+            { userId },
+            {
+                $set: {
+                    userId,
+                    driverName: driverName || '',
+                    email: email || '',
+                    emergencyNumber: (emergencyNumber || '').trim(),
+                    deviceId: trimmedDeviceId,
+                    hasCrashed: false,
+                    updatedAt: new Date()
+                }
+            },
+            { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+        );
+
+        const telemetryCount = trimmedDeviceId
+            ? await Telemetry.countDocuments({ deviceId: trimmedDeviceId })
+            : 0;
+
+        console.log("Profile saved:", {
+            userId: String(userId),
+            deviceId: profile.deviceId,
+            profileId: String(profile._id),
+            telemetryCount
+        });
+
+        res.status(200).json({
+            message: "Profile saved successfully!",
+            profile: { ...formatProfileDoc(profile), telemetryCount }
+        });
+    } catch (error) {
+        console.error("Mongoose Error:", error);
+        if (error.code === 11000) {
+            return res.status(400).json({
+                error: 'Database conflict (duplicate key). In Atlas, open the profiles collection and remove duplicate userId or deviceId indexes, then try again.'
+            });
+        }
+        res.status(500).json({ error: error.message || 'Failed to save profile' });
+    }
+});
+
+// API 3: GET LATEST TELEMETRY DATA (Protected)
+app.get('/api/telemetry/latest/:deviceId', authenticateToken, async (req, res) => {
+=======
+// API 2: SAVE PROFILE
+app.post('/api/profile', async (req, res) => {
+    const { deviceId, driverName, email, emergencyNumber } = req.body;
+    console.log("Received Profile Data:", req.body); 
+
+    try {
+        let profile = await Profile.findOneAndUpdate(
+            { deviceId: deviceId },
+            { driverName, email, emergencyNumber, hasCrashed: false }, 
+            { new: true, upsert: true } 
+        );
+        console.log("Profile saved to MongoDB!");
+        res.status(200).json({ message: "Profile saved successfully!", profile });
+    } catch (error) {
+        console.error("Mongoose Error:", error);
+        res.status(500).json({ error: "Failed to save profile" });
+    }
+});
+
+// API 3: GET LATEST TELEMETRY DATA
+app.get('/api/telemetry/latest/:deviceId', async (req, res) => {
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+    try {
+        const latestData = await Telemetry.findOne({ deviceId: req.params.deviceId }).sort({ timestamp: -1 });
+        if (latestData) {
+            const response = latestData.toObject();
+            response.timestampISO = response.timestamp.toISOString();
+            response.timestampUnix = Math.floor(response.timestamp.getTime() / 1000);
+            res.status(200).json(response);
+        } else {
+            res.status(404).json({ message: "No hardware data found yet" });
+        }
+    } catch (error) {
+        console.error("Error fetching telemetry:", error);
+        res.status(500).json({ error: "Failed to fetch telemetry" });
+    }
+});
+
+<<<<<<< HEAD
+// API 4: GET HISTORICAL TELEMETRY (Protected)
+app.get('/api/telemetry/history/:deviceId', authenticateToken, async (req, res) => {
+=======
+// API 4: GET HISTORICAL TELEMETRY
+app.get('/api/telemetry/history/:deviceId', async (req, res) => {
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+    try {
+        const { deviceId } = req.params;
+        const limit = parseInt(req.query.limit) || 30;
+        
+        const history = await Telemetry.find({ deviceId: deviceId })
+            .sort({ timestamp: -1 })
+            .limit(limit);
+        
+        if (history && history.length > 0) {
+            const formattedHistory = history.map(entry => {
+                const obj = entry.toObject();
+                obj.timestampISO = obj.timestamp.toISOString();
+                obj.timestampUnix = Math.floor(obj.timestamp.getTime() / 1000);
+                return obj;
+            });
+            
+            const chronologicalHistory = formattedHistory.reverse();
+            res.status(200).json(chronologicalHistory);
+        } else {
+            res.status(404).json({ message: "No historical data found" });
+        }
+    } catch (error) {
+        console.error("Error fetching history:", error);
+        res.status(500).json({ error: "Failed to fetch history" });
+    }
+});
+
+<<<<<<< HEAD
+// API 5: GET INCIDENT LOGS (Protected)
+app.get('/api/telemetry/incidents/:deviceId', authenticateToken, async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const minDeltaG = parseFloat(req.query.minDelta) || 1.5;
+=======
+// API 5: GET INCIDENT LOGS
+app.get('/api/telemetry/incidents/:deviceId', async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const minDeltaG = parseFloat(req.query.minDelta) || SPIKE_THRESHOLDS.moderate;
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+        
+        const incidents = await Telemetry.find({ 
+            deviceId: deviceId,
+            'spike.detected': true,
+            'spike.delta_g': { $gte: minDeltaG }
+        })
+            .sort({ timestamp: -1 })
+            .limit(100);
+        
+<<<<<<< HEAD
+        res.status(200).json(incidents);
+=======
+        if (incidents && incidents.length > 0) {
+            const formattedIncidents = incidents.map(entry => {
+                const obj = entry.toObject();
+                obj.timestampISO = obj.timestamp.toISOString();
+                obj.timestampUnix = Math.floor(obj.timestamp.getTime() / 1000);
+                return obj;
+            });
+            
+            console.log('Found ' + formattedIncidents.length + ' spike incidents for device ' + deviceId + ' (delta >= ' + minDeltaG + ')');
+            res.status(200).json(formattedIncidents);
+        } else {
+            res.status(200).json([]);
+        }
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+    } catch (error) {
+        console.error("Error fetching incidents:", error);
+        res.status(500).json({ error: "Failed to fetch incidents" });
+    }
+});
+
+<<<<<<< HEAD
+// API 6: HARDWARE RECEIVE TELEMETRY (Protected - but hardware might need its own key)
+app.post('/api/telemetry', authenticateToken, async (req, res) => {
+=======
+// API 6: HARDWARE RECEIVE TELEMETRY - UPDATED WITH AUTO-SMS
+app.post('/api/telemetry', async (req, res) => {
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+    const data = req.body;
+    const now = new Date();
+    const currentG = data.imu?.peak_g || 0;
+
+<<<<<<< HEAD
+    console.log(`[TELEMETRY] Device ${data.device_id} | Time: ${now.toISOString()} | Peak G: ${currentG}`);
+
+    try {
+        const previousEntry = await Telemetry.findOne({ deviceId: data.device_id })
+            .sort({ timestamp: -1 });
+
+        const previousG = previousEntry?.imu?.peak_g || 0;
+        const deltaG = Math.abs(currentG - previousG);
+        let severity = 'none';
+        let spikeDetected = false;
+        
+        if (deltaG >= 15) { severity = 'critical'; spikeDetected = true; }
+        else if (deltaG >= 7) { severity = 'severe'; spikeDetected = true; }
+        else if (deltaG >= 3.5) { severity = 'moderate'; spikeDetected = true; }
+        else if (deltaG >= 1.5) { severity = 'minor'; spikeDetected = true; }
+
+        console.log(`[SPIKE CHECK] prev=${previousG.toFixed(3)}g current=${currentG.toFixed(3)}g delta=${deltaG.toFixed(3)}g severity=${severity}`);
+
+=======
+    console.log('[TELEMETRY] Device ' + data.device_id + ' | Peak G: ' + currentG + ' | Velocity: ' + data.gps?.velocity_kmh);
+
+    try {
+        const previousEntry = await Telemetry.findOne({ deviceId: data.device_id }).sort({ timestamp: -1 });
+
+        const previousG = previousEntry?.imu?.peak_g || 0;
+        const deltaG = Math.abs(currentG - previousG);
+        const severity = getSpikeSeverity(deltaG);
+        const spikeDetected = severity !== 'none';
+
+        console.log('[SPIKE CHECK] prev=' + previousG.toFixed(3) + 'g current=' + currentG.toFixed(3) + 'g delta=' + deltaG.toFixed(3) + 'g severity=' + severity);
+
+        // Save telemetry
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+        const newLog = new Telemetry({
+            deviceId: data.device_id,
+            imu: data.imu,
+            gps: data.gps,
+            timestamp: now,
+            spike: {
+                detected: spikeDetected,
+                delta_g: deltaG,
+                prev_g: previousG,
+                severity: severity
+            }
+        });
+        await newLog.save();
+
+<<<<<<< HEAD
+        if (spikeDetected && deltaG >= 7) {
+            const profile = await Profile.findOne({ deviceId: data.device_id });
+
+            if (profile && !profile.hasCrashed) {
+                console.log(`[CRASH SPIKE DETECTED] ${profile.driverName}`);
+                profile.hasCrashed = true;
+                await profile.save();
+
+                if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
+                    try {
+                        await twilioClient.calls.create({
+                            twiml: `<Response>
+                                      <Say voice="alice">Emergency Alert. Vehicle ${data.device_id} driven by ${profile.driverName} has experienced a sudden impact spike of ${deltaG.toFixed(1)} G change, classified as ${severity}.</Say>
+                                      <Say voice="alice">Last known GPS coordinates are Latitude ${data.gps.latitude}, Longitude ${data.gps.longitude}. Please dispatch help immediately.</Say>
+                                    </Response>`,
+                            to: profile.emergencyNumber,
+                            from: process.env.TWILIO_PHONE_NUMBER
+                        });
+                        console.log(`[CALL SUCCESS] Emergency call initiated.`);
+                    } catch (twilioError) {
+                        console.error("Twilio call failed:", twilioError.message);
+                    }
+                }
+            }
+        }
+
+        res.status(200).json({ status: "success", timestamp: now.toISOString(), spike: { detected: spikeDetected, delta_g: deltaG, severity } });
+=======
+        // If moderate or severe → create notification
+        if (severity === 'moderate' || severity === 'severe') {
+            const notification = new Notification({
+                deviceId: data.device_id,
+                severity: severity,
+                deltaG: deltaG,
+                prevG: previousG,
+                currentG: currentG,
+                velocity: data.gps?.velocity_kmh || 0,
+                latitude: data.gps?.latitude || 0,
+                longitude: data.gps?.longitude || 0,
+                timestamp: now
+            });
+            await notification.save();
+            console.log(`[NOTIFICATION CREATED] ${severity.toUpperCase()} spike for ${data.device_id}`);
+        }
+
+        // If SEVERE → auto-send SMS
+        if (severity === 'severe') {
+            await sendCrashSMS(
+                data.device_id,
+                severity,
+                deltaG,
+                previousG,
+                currentG,
+                now,
+                data.gps?.latitude,
+                data.gps?.longitude
+            );
+        }
+
+        res.status(200).json({ 
+            status: "success", 
+            timestamp: now.toISOString(),
+            spike: { detected: spikeDetected, delta_g: deltaG, severity }
+        });
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+
+    } catch (error) {
+        console.error("Telemetry Error:", error.message);
+        res.status(500).json({ error: "Server error" });
+    }
+});
+
+<<<<<<< HEAD
+// List device IDs that have telemetry rows in MongoDB (for matching hardware → data)
+app.get('/api/telemetry/devices', authenticateToken, async (req, res) => {
+    try {
+        const ids = await Telemetry.distinct('deviceId');
+        res.status(200).json(ids.filter((id) => id && String(id).trim()).sort());
+    } catch (error) {
+        console.error('Error listing telemetry devices:', error);
+        res.status(500).json({ error: 'Failed to list telemetry devices' });
+    }
+});
+
+// API 7: FLEET STATS — optional ?deviceId=VX-9902 for one vehicle
+app.get('/api/admin/stats', authenticateToken, async (req, res) => {
+    try {
+        const { deviceId } = req.query;
+        const registeredFilter = {
+            deviceId: { $exists: true, $nin: ['', 'UNASSIGNED', null] }
+        };
+        const rosterCount = await Profile.countDocuments(registeredFilter);
+
+        if (!deviceId) {
+            return res.status(200).json({
+                deviceId: null,
+                totalVehicles: rosterCount,
+                minorBumps: 0,
+                moderateImpacts: 0,
+                heavyImpacts: 0,
+                severityEvents: 0,
+                totalTelemetryRecords: 0
+            });
+        }
+
+        const trimmedId = String(deviceId).trim();
+        const telemetryFilter = { deviceId: trimmedId };
+
+        const minorBumps = await Telemetry.countDocuments({ ...telemetryFilter, 'spike.severity': 'minor' });
+        const moderateImpacts = await Telemetry.countDocuments({ ...telemetryFilter, 'spike.severity': 'moderate' });
+        const heavyImpacts = await Telemetry.countDocuments({ ...telemetryFilter, 'spike.severity': 'severe' });
+        const severityEvents = await Telemetry.countDocuments({ ...telemetryFilter, 'spike.severity': 'critical' });
+        const totalTelemetryRecords = await Telemetry.countDocuments(telemetryFilter);
+
+        res.status(200).json({
+            deviceId: trimmedId,
+            totalVehicles: await Profile.countDocuments({ deviceId: trimmedId }),
+            minorBumps,
+            moderateImpacts,
+            heavyImpacts,
+            severityEvents,
+            totalTelemetryRecords
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch admin stats' });
+    }
+});
+
+// API 8: REGISTERED VEHICLES (profiles with a Device ID set)
+app.get('/api/admin/vehicles', authenticateToken, async (req, res) => {
+    try {
+        const vehicles = await Profile.find({
+            deviceId: { $exists: true, $nin: ['', 'UNASSIGNED', null] }
+        }).sort({ updatedAt: -1 });
+
+        const enriched = await Promise.all(
+            vehicles.map(async (vehicle) => {
+                const doc = formatProfileDoc(vehicle);
+                const telemetryCount = await Telemetry.countDocuments({ deviceId: doc.deviceId });
+                const latest = await Telemetry.findOne({ deviceId: doc.deviceId }).sort({ timestamp: -1 });
+                return {
+                    ...doc,
+                    telemetryCount,
+                    lastTelemetry: latest?.timestamp || null
+                };
+            })
+        );
+
+        res.status(200).json(enriched);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch vehicles' });
+    }
+});
+
+// API 9: FLEET INCIDENTS — optional ?deviceId=
+app.get('/api/admin/incidents', authenticateToken, async (req, res) => {
+    try {
+        const { deviceId } = req.query;
+        if (!deviceId) {
+            return res.status(200).json([]);
+        }
+        const incidents = await Telemetry.find({
+            'spike.detected': true,
+            deviceId: String(deviceId).trim()
+        })
+=======
+// API 7: GET UNREAD NOTIFICATIONS
+app.get('/api/notifications/:deviceId', async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const notifications = await Notification.find({ 
+            deviceId: deviceId,
+            acknowledged: false 
+        }).sort({ timestamp: -1 });
+        
+        res.status(200).json(notifications);
+    } catch (error) {
+        console.error("Error fetching notifications:", error);
+        res.status(500).json({ error: "Failed to fetch notifications" });
+    }
+});
+
+// API 8: ACKNOWLEDGE NOTIFICATION
+app.post('/api/notifications/acknowledge/:id', async (req, res) => {
+    try {
+        const notification = await Notification.findByIdAndUpdate(
+            req.params.id,
+            { acknowledged: true },
+            { new: true }
+        );
+        res.status(200).json(notification);
+    } catch (error) {
+        res.status(500).json({ error: "Failed to acknowledge notification" });
+    }
+});
+
+// API 9: GET GLOBAL STATS
+app.get('/api/admin/stats', async (req, res) => {
+    try {
+        const totalVehicles = await Profile.countDocuments();
+        const moderateImpacts = await Telemetry.countDocuments({ "spike.severity": "moderate" });
+        const severeImpacts = await Telemetry.countDocuments({ "spike.severity": "severe" });
+        
+        res.status(200).json({ totalVehicles, moderateImpacts, severeImpacts });
+    } catch (error) {
+        res.status(500).json({ error: "Failed to fetch admin stats" });
+    }
+});
+
+// API 10: GET ALL REGISTERED VEHICLES
+app.get('/api/admin/vehicles', async (req, res) => {
+    try {
+        const vehicles = await Profile.find().sort({ updatedAt: -1 });
+        res.status(200).json(vehicles);
+    } catch (error) {
+        res.status(500).json({ error: "Failed to fetch vehicles" });
+    }
+});
+
+// API 11: GET ALL FLEET INCIDENTS
+app.get('/api/admin/incidents', async (req, res) => {
+    try {
+        const incidents = await Telemetry.find({ 'spike.detected': true })
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+            .sort({ timestamp: -1 })
+            .limit(50);
+        res.status(200).json(incidents);
+    } catch (error) {
+<<<<<<< HEAD
+        res.status(500).json({ error: 'Failed to fetch fleet incidents' });
+    }
+});
+
+const PORT = process.env.PORT || 8080;
+=======
+        res.status(500).json({ error: "Failed to fetch fleet incidents" });
+    }
+});
+
+const PORT = process.env.PORT || 5000;
+>>>>>>> 10094c2d7d52891488b78219451e613e4315e280
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+});
